@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -39,11 +40,19 @@ from profit_accounting_26.ui.ui_loader import load_settings_page
 
 # 导航按钮 objectName、页面 objectName、显示文字、SVG 图标文件名（顺序固定）
 _NAV_ICON_DIR = "src/profit_accounting_26/ui/assets"
-NAV_BINDINGS: list[tuple[str, str, str, str]] = [
+_NAV_BINDINGS_ALL: list[tuple[str, str, str, str]] = [
     ("btnNavProductCollection", "pageProductCollection", "商品采集", "nav_data_import_export.svg"),
     ("btnNavCalculation", "pageCalculation", "新商品测算", "nav_model_calibration_feedback.svg"),
     ("btnNavHistory", "pageHistory", "历史记录管理", "nav_history_records.svg"),
     ("btnNavSettings", "pageSettingsHost", "设置", "nav_settings.svg"),
+]
+# 平台门控（与 main_window.COLLECTOR_ENABLED 保持一致）：非 Windows 无商品采集导航项，
+# 保证 NAV_BINDINGS 与 main_window.NAV_ITEMS 平行、索引一致。
+_COLLECTOR_ENABLED = sys.platform == "win32"
+NAV_BINDINGS: list[tuple[str, str, str, str]] = [
+    binding
+    for binding in _NAV_BINDINGS_ALL
+    if _COLLECTOR_ENABLED or binding[1] != "pageProductCollection"
 ]
 
 
@@ -153,6 +162,11 @@ class MainWindowBinder:
             idx = len(self._nav_buttons)
             btn.clicked.connect(lambda _checked, i=idx: self.switch_page(i))
             self._nav_buttons.append(btn)
+        # 采集模块未启用（非 Windows）时，隐藏 .ui 中仍存在的商品采集导航按钮
+        if not _COLLECTOR_ENABLED:
+            collector_btn = self.window.findChild(QPushButton, "btnNavProductCollection")
+            if collector_btn:
+                collector_btn.setVisible(False)
         # 初始化第一个按钮为选中态
         if self._nav_buttons:
             self._update_nav_styles(0)

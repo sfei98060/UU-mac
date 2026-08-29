@@ -28,6 +28,8 @@ def build_window(data_dir=None):
 
 
 def main() -> int:
+    import sys
+
     from profit_accounting_26.ui.single_instance import (
         UU_ESCORT_INSTANCE_KEY,
         SingleInstanceGuard,
@@ -48,6 +50,11 @@ def main() -> int:
 
     guard.activateRequested.connect(_activate)
     window.showMaximized()
+    if sys.platform == "darwin":
+        # 从 .command 启动器（Terminal 进程）启动时，macOS 默认不把应用置前；
+        # 显式请求置前并激活，保证双击后窗口立即可用。
+        window.raise_()
+        window.activateWindow()
     return app.exec()
 
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 from PySide6.QtGui import QGuiApplication, QIcon
 from PySide6.QtWidgets import QMainWindow, QWidget
 
@@ -13,14 +15,22 @@ from profit_accounting_26.ui.pages import (
     SettingsPage,
 )
 from profit_accounting_26.ui.theme import APP_STYLE
-from profit_accounting_26.product_collector import ProductCollectionPage
-# 保留 NAV_ITEMS 供 app.py 和测试导入
+
+# 商品采集依赖 Playwright + Microsoft Edge（channel="msedge"），仅 Windows 提供；
+# 其他平台不导入、不初始化采集模块，其依赖缺失不得阻塞应用启动。
+COLLECTOR_ENABLED = sys.platform == "win32"
+if COLLECTOR_ENABLED:
+    from profit_accounting_26.product_collector import ProductCollectionPage
+
+# 保留 NAV_ITEMS 供 app.py 和测试导入（平台门控：非 Windows 无商品采集导航项）
 NAV_ITEMS = [
     "商品采集",
     "新商品测算",
     "历史记录管理",
     "设置",
 ]
+if not COLLECTOR_ENABLED:
+    NAV_ITEMS = [item for item in NAV_ITEMS if item != "商品采集"]
 SUBTITLES = {
     "新商品测算": "图片识别、物流估算与利润测算在同一页面完成",
     "商品采集": "AliExpress Business 商品搜索与候选管理",
@@ -90,13 +100,16 @@ class MainWindow(QMainWindow):
         self.history_page = HistoryPage(context)
         self.settings_page = SettingsPage(context)
 
-        # 创建商品采集页（独立模块，不依赖 AppContext）
-        self.product_collection_page = ProductCollectionPage()
-        # 注入日志目录：<data_dir>/product_collector/
-        collector_log_dir = str(context.paths.data_dir / "product_collector")
-        self.product_collection_page.set_log_dir(collector_log_dir)
-        # 注入 API Profile Store（用于风险检测）
-        self.product_collection_page.set_api_profile_store(context.api_profile_store)
+        # 创建商品采集页（独立模块，不依赖 AppContext）；仅 Windows 启用
+        if COLLECTOR_ENABLED:
+            self.product_collection_page = ProductCollectionPage()
+            # 注入日志目录：<data_dir>/product_collector/
+            collector_log_dir = str(context.paths.data_dir / "product_collector")
+            self.product_collection_page.set_log_dir(collector_log_dir)
+            # 注入 API Profile Store（用于风险检测）
+            self.product_collection_page.set_api_profile_store(context.api_profile_store)
+        else:
+            self.product_collection_page = None
 
         # 使用 Binder 绑定 .ui 控件
         self.binder = MainWindowBinder(self, context)
@@ -105,6 +118,11 @@ class MainWindow(QMainWindow):
         self.binder.settings_page = self.settings_page
         self.binder.history_page = self.history_page
         self.binder.bind()
+
+        # macOS 专属尺寸适配（平台门控）：仅收紧结构性尺寸（侧边栏宽度、内容
+        # 边距/间距、中部列最小宽度），不缩放任何控件文字，不改变 Windows 行为。
+        if sys.platform == "darwin":
+            self._apply_macos_fit()
 
         # 跨页面信号（保留现有行为）
         self.calculation_page.dirtyChanged.connect(self.binder.set_dirty)
@@ -125,3 +143,44 @@ class MainWindow(QMainWindow):
     def open_record(self, record_id: str) -> None:
         self.calculation_page.load_record_payload(record_id)
         self.switch_page(NAV_ITEMS.index("新商品测算"))
+
+    def _apply_macos_fit(self) -> None:
+        """macOS 尺寸适配（仅结构层，不缩放控件文字）。
+
+        MacBook 屏幕可用区（如 13″ 1470×837）显著小于本页面 1920×1080 的设计验收
+        尺寸；在不改变信息层级、不做结构性重排、不缩小文字的前提下，收紧以下结构尺寸
+        以降低最大化时的滚动溢出：
+        - 侧边栏固定宽度 220 → 184；
+        - 计算内容区外边距 16/14 → 10/8，段落间距 10 → 6；
+        - 中部三列最小宽度（成本 690→600、物流 350→320、右列 220→200），
+          及三张包装卡最小宽度 205 → 186。
+        这些只是“最小宽度”收紧，窗口拉宽时各列仍按原 stretch 自动放大。
+        """
+        from PySide6.QtWidgets import QFrame, QWidget
+
+        sidebar = self.findChild(QFrame, "sidebarFrame")
+        if sidebar is not None:
+            sidebar.setMinimumWidth(184)
+            sidebar.setMaximumWidth(184)
+
+        body = self.findChild(QWidget, "calculationBody")
+        if body is not None:
+            body.setMinimumWidth(0)
+            layout = body.layout()
+            if layout is not None:
+                layout.setContentsMargins(10, 8, 10, 8)
+                layout.setSpacing(6)
+
+        for name, width in (
+            ("costPackingSection", 600),
+            ("freightSection", 320),
+            ("tailSettingsCard", 200),
+            ("systemCostSection", 200),
+        ):
+            widget = self.findChild(QWidget, name)
+            if widget is not None:
+                widget.setMinimumWidth(width)
+        for name in ("bareProductCard", "normalPackageCard", "conservativePackageCard"):
+            card = self.findChild(QWidget, name)
+            if card is not None:
+                card.setMinimumWidth(186)

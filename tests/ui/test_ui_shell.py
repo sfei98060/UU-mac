@@ -1,4 +1,5 @@
 import os
+import sys
 
 import pytest
 
@@ -12,13 +13,22 @@ def test_three_navigation_items_are_visible_in_fixed_order(qapp, tmp_path, monke
     # qapp 来自 tests/conftest.py 会话级 fixture；build_window() 复用
     # QApplication.instance()，整个测试会话只存在一个 QApplication。
     # 隔离数据目录：显式注入临时目录，避免走 location.json（正式 UI 启动路径）。
-    # Product Collector 集成后导航为 4 项
-    assert NAV_ITEMS == [
-        "商品采集",
-        "新商品测算",
-        "历史记录管理",
-        "设置",
-    ]
+    # Product Collector 集成后 Windows 导航为 4 项；非 Windows 平台商品采集
+    # 按平台门控移除（依赖 Playwright + Microsoft Edge，仅 Windows 提供）。
+    if sys.platform == "win32":
+        expected = [
+            "商品采集",
+            "新商品测算",
+            "历史记录管理",
+            "设置",
+        ]
+    else:
+        expected = [
+            "新商品测算",
+            "历史记录管理",
+            "设置",
+        ]
+    assert NAV_ITEMS == expected
     app, window = build_window(data_dir=tmp_path)
     # 标题来自冻结 main_window.ui 的 windowTitle（运行时为 UU护航 3.0.1），不硬编码旧版本
     assert window.windowTitle() == "UU护航 3.0.1"
