@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import os
+import sys
 
 import pytest
 
@@ -55,7 +56,17 @@ class TestNoNestedPages:
         window = self._build(temp_context)
         try:
             def count(cls, name):
-                return len(window.findChildren(cls, name))
+                n = len(window.findChildren(cls, name))
+                if sys.platform == "darwin":
+                    # macOS 容器层等比缩放：测算页根节点被代理进
+                    # QGraphicsScene，不在窗口部件树中；其内部控件经
+                    # _root 计数，全窗口唯一性不变式保持不变。
+                    root = window.calculation_page._root
+                    n += len(root.findChildren(cls, name))
+                    # findChildren 不含自身，而 _root 本身就是 pageCalculation
+                    if isinstance(root, cls) and root.objectName() == name:
+                        n += 1
+                return n
 
             # 主窗口结构唯一
             assert count(QStackedWidget, "mainStack") == 1

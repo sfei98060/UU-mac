@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import asdict, replace
 
 import pytest
@@ -240,8 +241,18 @@ class TestResolutionBehavior:
                     qapp.processEvents()
                 calc_scroll = calc._root.findChild(QScrollArea, "calculationScrollArea")
                 settings_scroll = settings._root.findChild(QScrollArea, "settingsScrollArea")
-                # 测算：body min 1360 > 窄视口 → 横向滚动可访问
-                assert calc_scroll.horizontalScrollBar().maximum() > 0
+                if sys.platform == "darwin":
+                    # macOS 容器层整体等比缩放：窄视口不再滚动，整页按比例
+                    # 缩小保证内容完整可见（用户指定的平台行为，替代滚动）
+                    view = calc._scaling_view
+                    scale = view.transform().m11()
+                    assert calc_scroll.horizontalScrollBar().maximum() == 0
+                    assert calc_scroll.verticalScrollBar().maximum() == 0
+                    assert calc._root.width() * scale <= view.viewport().width() + 1
+                    assert calc._root.height() * scale <= view.viewport().height() + 1
+                else:
+                    # 测算：body min 1360 > 窄视口 → 横向滚动可访问
+                    assert calc_scroll.horizontalScrollBar().maximum() > 0
                 # 设置：settingsScrollArea 承担滚动（body min 1200）
                 assert (
                     settings_scroll.horizontalScrollBar().maximum() > 0

@@ -188,6 +188,12 @@ class BlankClickFocusFilter(QObject):
                 return False
             cursor = cursor.parentWidget()
         focused = QApplication.focusWidget()
+        if focused is None:
+            # 页面被代理嵌入时（macOS 容器层缩放），编辑焦点位于代理容器
+            # 窗口，应用级 focusWidget() 返回 None，需回退到根节点所在窗口。
+            root_window = self.root.window()
+            if root_window is not None:
+                focused = root_window.focusWidget()
         if focused is not None and focused is not target:
             focused.clearFocus()
         return False

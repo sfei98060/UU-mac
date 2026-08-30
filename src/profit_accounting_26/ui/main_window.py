@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import sys
 
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QGuiApplication, QIcon
-from PySide6.QtWidgets import QMainWindow, QWidget
+from PySide6.QtWidgets import QMainWindow, QPushButton, QWidget
 
 from profit_accounting_26._version import __version__
 from profit_accounting_26.application import AppContext
@@ -119,10 +120,11 @@ class MainWindow(QMainWindow):
         self.binder.history_page = self.history_page
         self.binder.bind()
 
-        # macOS 专属尺寸适配（平台门控）：仅收紧结构性尺寸（侧边栏宽度、内容
-        # 边距/间距、中部列最小宽度），不缩放任何控件文字，不改变 Windows 行为。
+        # macOS 专属适配（平台门控，不改变 Windows/Linux 行为）：
+        # 侧边栏补一个 UU测算 轻量计算器入口（测算页整体等比缩放由
+        # CalculationPage 自行完成，见其 _apply_macos_uniform_scaling）。
         if sys.platform == "darwin":
-            self._apply_macos_fit()
+            self._install_quick_calculator_entry()
 
         # 跨页面信号（保留现有行为）
         self.calculation_page.dirtyChanged.connect(self.binder.set_dirty)
@@ -144,43 +146,50 @@ class MainWindow(QMainWindow):
         self.calculation_page.load_record_payload(record_id)
         self.switch_page(NAV_ITEMS.index("新商品测算"))
 
-    def _apply_macos_fit(self) -> None:
-        """macOS 尺寸适配（仅结构层，不缩放控件文字）。
+    def _install_quick_calculator_entry(self) -> None:
+        """macOS 侧边栏补充“UU测算”入口。
 
-        MacBook 屏幕可用区（如 13″ 1470×837）显著小于本页面 1920×1080 的设计验收
-        尺寸；在不改变信息层级、不做结构性重排、不缩小文字的前提下，收紧以下结构尺寸
-        以降低最大化时的滚动溢出：
-        - 侧边栏固定宽度 220 → 184；
-        - 计算内容区外边距 16/14 → 10/8，段落间距 10 → 6；
-        - 中部三列最小宽度（成本 690→600、物流 350→320、右列 220→200），
-          及三张包装卡最小宽度 205 → 186。
-        这些只是“最小宽度”收紧，窗口拉宽时各列仍按原 stretch 自动放大。
+        Windows 上 UU测算 有独立 exe 入口；macOS 只发布主程序 .app，
+        故在主程序既有导航区（设置按钮之后）补一个入口按钮，
+        直接复用现有轻量计算器窗口，不复制任何业务逻辑。
         """
-        from PySide6.QtWidgets import QFrame, QWidget
+        settings_btn = self.findChild(QPushButton, "btnNavSettings")
+        if settings_btn is None or settings_btn.parentWidget() is None:
+            return
+        layout = settings_btn.parentWidget().layout()
+        if layout is None:
+            return
+        btn = QPushButton("UU测算")
+        btn.setObjectName("btnOpenQuickCalculator")
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setToolTip("打开 UU测算 轻量计算器")
+        btn.setIcon(
+            QIcon(str(resource_path("src/profit_accounting_26/ui/assets/uu_logo_blue.png")))
+        )
+        btn.setIconSize(QSize(20, 20))
+        # 与导航按钮同一视觉样式（见 MainWindowBinder._bind_navigation），不另做设计
+        btn.setStyleSheet(
+            "QPushButton { background: transparent; border: none;"
+            " text-align: left; padding: 10px 12px 10px 40px;"
+            " font-size: 13px; color: #42526a;"
+            " border-radius: 6px; }"
+        )
+        layout.insertWidget(layout.indexOf(settings_btn) + 1, btn)
+        btn.clicked.connect(self._open_quick_calculator)
+        self._quick_calculator_window = None
 
-        sidebar = self.findChild(QFrame, "sidebarFrame")
-        if sidebar is not None:
-            sidebar.setMinimumWidth(184)
-            sidebar.setMaximumWidth(184)
+    def _open_quick_calculator(self) -> None:
+        """打开（或复用已打开的）UU测算 轻量计算器窗口。
 
-        body = self.findChild(QWidget, "calculationBody")
-        if body is not None:
-            body.setMinimumWidth(0)
-            layout = body.layout()
-            if layout is not None:
-                layout.setContentsMargins(10, 8, 10, 8)
-                layout.setSpacing(6)
+        与主程序同进程、同 AppContext/数据目录（QuickCalculatorWindow 的
+        设计契约即“与主软件共用同一数据目录/SettingsService/AppContext”）。
+        """
+        window = getattr(self, "_quick_calculator_window", None)
+        if window is None:
+            from profit_accounting_26.ui.quick_calculator_window import QuickCalculatorWindow
 
-        for name, width in (
-            ("costPackingSection", 600),
-            ("freightSection", 320),
-            ("tailSettingsCard", 200),
-            ("systemCostSection", 200),
-        ):
-            widget = self.findChild(QWidget, name)
-            if widget is not None:
-                widget.setMinimumWidth(width)
-        for name in ("bareProductCard", "normalPackageCard", "conservativePackageCard"):
-            card = self.findChild(QWidget, name)
-            if card is not None:
-                card.setMinimumWidth(186)
+            window = QuickCalculatorWindow(self.context)
+            self._quick_calculator_window = window
+        window.show()
+        window.raise_()
+        window.activateWindow()

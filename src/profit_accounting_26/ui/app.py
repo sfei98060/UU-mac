@@ -51,8 +51,8 @@ def main() -> int:
     guard.activateRequested.connect(_activate)
     window.showMaximized()
     if sys.platform == "darwin":
-        # 从 .command 启动器（Terminal 进程）启动时，macOS 默认不把应用置前；
-        # 显式请求置前并激活，保证双击后窗口立即可用。
+        # 从 Finder 双击 .app（或经 open/终端）启动时显式请求置前并激活，
+        # 保证启动后窗口立即处于可用状态。
         window.raise_()
         window.activateWindow()
     return app.exec()

@@ -12,18 +12,22 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from PySide6.QtCore import QEvent, QObject, QThread, Qt, QSignalBlocker, Signal, Slot
-from PySide6.QtGui import QDoubleValidator, QKeyEvent, QKeySequence
+from PySide6.QtCore import QEvent, QObject, QThread, Qt, QSignalBlocker, QSize, Signal, Slot
+from PySide6.QtGui import QDoubleValidator, QKeyEvent, QKeySequence, QPainter, QTransform
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
+    QGraphicsScene,
+    QGraphicsView,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -31,6 +35,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -67,11 +72,67 @@ from profit_accounting_26.domain.models import (
 from profit_accounting_26.ui.binders.calculation_binder import CalculationBinder
 from profit_accounting_26.ui.controllers.forwarder_cards_controller import ForwarderCardsController
 from profit_accounting_26.ui.controllers.image_slots_controller import ImageSlotsController
+from profit_accounting_26.ui.theme import APP_STYLE
 from profit_accounting_26.ui.ui_loader import load_main_window
 from profit_accounting_26.ui.widgets import Card, ImageSlotWidget, QuoteCard, confirm_action
 from profit_accounting_26.ui.input_editing import (
     install_blank_click_focus_filter,
 )
+
+
+class _ScalingPageView(QGraphicsView):
+    """容器层整体等比缩放视图（macOS 适配专用）。
+
+    将测算页根节点按其设计自然尺寸原样冻结后承载于 QGraphicsScene：
+    视口不小于内容时 1:1 显示；视口不足时整体等比缩小（不重排、
+    不逐个改控件尺寸，视觉结构与模块比例与设计完全一致）。
+    """
+
+    def __init__(self, page: QWidget) -> None:
+        super().__init__()
+        self._embedded_page = page
+        self._page_size = page.size()
+        scene = QGraphicsScene(self)
+        self.setScene(scene)
+        scene.addWidget(page)
+        self.setStyleSheet("QGraphicsView { border: none; background: transparent; }")
+        self.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        self.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        # 向外层布局报 0 尺寸：视图永远适配视口，缩放/滚动职责由内部
+        # 等比缩放承担，不得抬高页面对空间的最低要求。
+        return QSize(0, 0)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(0, 0)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        cw, ch = self._page_size.width(), self._page_size.height()
+        if cw <= 0 or ch <= 0:
+            return
+        vp = self.viewport().size()
+        if vp.width() <= 0 or vp.height() <= 0:
+            return
+        scale = min(1.0, vp.width() / cw, vp.height() / ch)
+        self.setTransform(QTransform().scale(scale, scale))
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        # 事件到达视图本身即点落在场景空白处（嵌入控件不处理时同样回流到此），
+        # 继承原 QScrollArea 视口空白点击的提交焦点职责。嵌入控件的焦点位于
+        # 代理容器窗口，QApplication.focusWidget() 看不到，需回退到页面自身窗口。
+        focused = QApplication.focusWidget()
+        if focused is None and self._embedded_page is not None:
+            page_window = self._embedded_page.window()
+            if page_window is not None:
+                focused = page_window.focusWidget()
+        if focused is not None:
+            focused.clearFocus()
+        super().mousePressEvent(event)
 
 
 class RecognitionWorker(QObject):
@@ -360,6 +421,48 @@ class CalculationPage(QWidget):
         self._sync_tail_rmb_from_usd(recalculate=False)
         self.recalculate()
         self._blank_focus_guard = install_blank_click_focus_filter(self)
+        # macOS 专属：容器层整体等比缩放（平台门控，不改变 Windows/Linux 行为）
+        if sys.platform == "darwin":
+            self._apply_macos_uniform_scaling()
+
+    def _apply_macos_uniform_scaling(self) -> None:
+        """macOS：测算页整页在容器层整体等比缩放（唯一适配层）。
+
+        根因：页面自然尺寸超过 13″ MacBook 最大化后的可用视口，原
+        QScrollArea 出现双向滚动；此前逐控件收紧最小宽度的补丁不解决
+        根因，已移除。
+
+        修复：不修改任何子控件尺寸/间距/字体，把页面根节点（_root）按
+        自然尺寸冻结后代理进 QGraphicsScene，视口不足时整体等比缩小、
+        足够时 1:1 显示；正常窗口与最大化窗口保持同一视觉结构。页内
+        所有控件查找都经由 _root，整树代理不影响任何运行时链路。
+        """
+        layout = self.layout()
+        layout.removeWidget(self._root)
+        # 代理要求被嵌入控件为顶层窗口，故先解除与本页的父子关系
+        self._root.setParent(None)
+        scroll = self._root.findChild(QScrollArea, "calculationScrollArea")
+        body = scroll.widget() if scroll is not None else None
+        if scroll is not None and body is not None:
+            # 冻结基线 = 内容自然尺寸 + 页面布局边距 + 滚动区边框，
+            # 冻结后内部滚动区视口恰好等于内容自然尺寸，永不出现内部
+            # 滚动条，且基线尽可能大（缩得最少）。不依赖任何布局激活
+            # 时序，仅读取静态结构量。
+            content = body.sizeHint()
+            m_left, m_top, m_right, m_bottom = self._root.layout().getContentsMargins()
+            frame = scroll.frameWidth() * 2
+            self._root.setFixedSize(
+                content.width() + m_left + m_right + frame,
+                content.height() + m_top + m_bottom + frame,
+            )
+        else:
+            self._root.setFixedSize(self._root.sizeHint())
+        self._scaling_view = _ScalingPageView(self._root)
+        layout.addWidget(self._scaling_view)
+        # 代理后 _root 不再是 MainWindow 的子孙，样式须对其重设一次全局主题
+        self._root.setStyleSheet(APP_STYLE)
+        # 空白点击焦点守卫的根改指向被代理的页面根节点
+        self._blank_focus_guard.root = self._root
 
     # ------------------------------------------------------------------
     # .ui 加载与控件绑定

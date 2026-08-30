@@ -277,9 +277,12 @@ class TestListPriceRateInUi:
 
     def test_find_children_and_visible(self, main_window_fixture):
         window = main_window_fixture
-        title = window.findChild(QLabel, "lblListPriceProfitRateTitle")
-        value = window.findChild(QDoubleSpinBox, "txtListPriceProfitRate")
-        unit = window.findChild(QLabel, "unit_txtListPriceProfitRate")
+        # 经测算页根节点查找（macOS 上 _root 被代理进 QGraphicsScene，
+        # 不在窗口部件树中；_root 相对查找在所有平台一致有效）
+        page_find = window.calculation_page._root.findChild
+        title = page_find(QLabel, "lblListPriceProfitRateTitle")
+        value = page_find(QDoubleSpinBox, "txtListPriceProfitRate")
+        unit = page_find(QLabel, "unit_txtListPriceProfitRate")
         assert title is not None, "lblListPriceProfitRateTitle 未找到"
         assert value is not None, "txtListPriceProfitRate 未找到"
         assert unit is not None and unit.text() == "%", "标价利率 % 单位标签缺失"
@@ -295,9 +298,10 @@ class TestListPriceRateInUi:
     def test_position_between_shein_price_and_profit(self, main_window_fixture):
         """标价利率与 SHEIN标价 / 标价利润同属标价区，水平顺序正确。"""
         window = main_window_fixture
-        na_price_w = window.findChild(QDoubleSpinBox, "txtNoActivityPriceRmb")
-        lp_rate_w = window.findChild(QDoubleSpinBox, "txtListPriceProfitRate")
-        na_profit_w = window.findChild(QDoubleSpinBox, "txtNoActivityProfitRmb")
+        page_find = window.calculation_page._root.findChild
+        na_price_w = page_find(QDoubleSpinBox, "txtNoActivityPriceRmb")
+        lp_rate_w = page_find(QDoubleSpinBox, "txtListPriceProfitRate")
+        na_profit_w = page_find(QDoubleSpinBox, "txtNoActivityProfitRmb")
 
         assert na_price_w is not None and lp_rate_w is not None and na_profit_w is not None
         # 三个控件均可见且水平顺序：SHEIN标价 < 标价利率 < 标价利润
@@ -316,7 +320,7 @@ class TestListPriceRateInUi:
         """真实计算：cost=100, 标价利润=40.81 → '40.81%'。"""
         window = main_window_fixture
         binder = window.calculation_page.profit_binder
-        rate_spin = window.findChild(QDoubleSpinBox, "txtListPriceProfitRate")
+        rate_spin = window.calculation_page._root.findChild(QDoubleSpinBox, "txtListPriceProfitRate")
 
         binder.set_calculation_cost(100.0)
         # 直接设置无活动利润 = 40.81 触发 driver 反推
@@ -329,7 +333,7 @@ class TestListPriceRateInUi:
         """成本为 0 时安全显示 0，不异常。"""
         window = main_window_fixture
         binder = window.calculation_page.profit_binder
-        rate_spin = window.findChild(QDoubleSpinBox, "txtListPriceProfitRate")
+        rate_spin = window.calculation_page._root.findChild(QDoubleSpinBox, "txtListPriceProfitRate")
 
         binder.set_calculation_cost(0.0)
         binder.txt_na_price_usd.setValue(20.0)
@@ -338,7 +342,7 @@ class TestListPriceRateInUi:
     def test_user_can_edit(self, main_window_fixture):
         """标价利率是可编辑百分比输入框：无上下箭头、2 位小数、可输入负值。"""
         window = main_window_fixture
-        value = window.findChild(QDoubleSpinBox, "txtListPriceProfitRate")
+        value = window.calculation_page._root.findChild(QDoubleSpinBox, "txtListPriceProfitRate")
         assert isinstance(value, QDoubleSpinBox)
         assert not value.isReadOnly()
         assert value.buttonSymbols() == QAbstractSpinBox.ButtonSymbols.NoButtons
